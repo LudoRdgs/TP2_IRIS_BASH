@@ -34,13 +34,24 @@ VM_IP="192.168.253.10"
 # Elle sera installée dans la VM pour l'utilisateur debian.
 SSH_KEY_FILE="${HOME}/.ssh/authorized_keys"
 
+# Vérifie si NOM apparaît dans la liste renvoyée par une commande virsh (ex. : in_list "$VM_NAME" list --name).
+# La liste est d'abord récupérée en entier, puis les espaces de début et de fin de ligne sont retirés :
+# grep ne coupe plus la sortie de virsh en cours d'écriture et le nom est comparé exactement.
+in_list() {
+    local name=$1
+    local list
+    shift
+    list=$(virsh -c "$LIBVIRT_URI" "$@" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    grep -Fxq -- "$name" <<< "$list"
+}
+
 # Crée, démarre et rend automatique le réseau virtuel 192.168.253.0/24 en NAT.
 setup_vnet() {
     # Chemin du fichier XML temporaire qui décrit le réseau.
     local xml_file
     # Liste tous les réseaux, même arrêtés, et cherche le nom exact du nôtre.
     # Le réseau n'est défini que s'il n'existe pas encore : le script peut être relancé.
-    if ! virsh -c "$LIBVIRT_URI" net-list --all --name | grep -Fxq "$VNET_NAME"; then
+    if ! in_list "$VNET_NAME" net-list --all --name; then
         # Crée un fichier temporaire vide pour y écrire la définition XML.
         xml_file=$(mktemp)
         # Écrit tout le texte jusqu'à EOF dans le fichier, en remplaçant les variables.
@@ -70,7 +81,7 @@ EOF
     # Démarre le réseau (pont et DHCP) seulement s'il n'est pas déjà actif.
     # Sans --all, net-list ne liste que les réseaux actifs : ce test ne dépend pas
     # de la langue de virsh (net-info affiche « Actif : oui » sur un serveur en français).
-    if ! virsh -c "$LIBVIRT_URI" net-list --name | grep -Fxq "$VNET_NAME"; then
+    if ! in_list "$VNET_NAME" net-list --name; then
         virsh -c "$LIBVIRT_URI" net-start "$VNET_NAME"
     fi
     # Redémarre le réseau automatiquement avec le serveur ; la commande peut être relancée.
@@ -86,14 +97,14 @@ setup_pool() {
     # pour ouvrir le disque, sans pouvoir lister son contenu.
     mkdir -p "$POOL_DIR" && chmod 0711 "$POOL_DIR"
     # Ne définit le pool que s'il n'existe pas déjà dans libvirt.
-    if ! virsh -c "$LIBVIRT_URI" pool-list --all --name | grep -Fxq "$POOL_NAME"; then
+    if ! in_list "$POOL_NAME" pool-list --all --name; then
         # Déclare un pool de type répertoire pointant vers POOL_DIR.
         virsh -c "$LIBVIRT_URI" pool-define-as "$POOL_NAME" dir --target "$POOL_DIR"
     fi
 
     # Démarre le pool uniquement s'il n'est pas déjà actif.
     # Sans --all, pool-list ne liste que les pools actifs (indépendant de la langue).
-    if ! virsh -c "$LIBVIRT_URI" pool-list --name | grep -Fxq "$POOL_NAME"; then
+    if ! in_list "$POOL_NAME" pool-list --name; then
         virsh -c "$LIBVIRT_URI" pool-start "$POOL_NAME"
     fi
     # Configure libvirt pour démarrer ce pool à chaque démarrage du serveur.
@@ -191,7 +202,7 @@ start_vm() {
 
     # virt-install démarre déjà la VM : dans ce cas, simple message sans erreur.
     # Sans --all, list ne liste que les VM en cours d'exécution (indépendant de la langue).
-    if virsh -c "$LIBVIRT_URI" list --name | grep -Fxq "$VM_NAME"; then
+    if in_list "$VM_NAME" list --name; then
         echo "La VM $VM_NAME est déjà en cours d'exécution."
     else
         # Démarre la VM définie dans libvirt.
