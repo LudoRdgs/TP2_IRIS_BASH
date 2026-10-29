@@ -21,6 +21,8 @@ POOL_NAME="RODRIGUES-SRV01"
 POOL_DIR="${HOME}/libvirt/images/${POOL_NAME}"
 # Chemin du disque de la VM, rangé dans le pool.
 VM_DISK="${POOL_DIR}/${VM_NAME}.qcow2"
+# Support cloud-init NoCloud (ISO nommée « cidata ») lu par la VM au premier démarrage.
+SEED_ISO="${POOL_DIR}/${VM_NAME}-seed.iso"
 # Nom du réseau virtuel libvirt de la VM.
 VNET_NAME="RODRIGUES-SRV01-VNET"
 # Nom du pont créé par libvirt sur le serveur (15 caractères au maximum).
@@ -31,7 +33,7 @@ VM_MAC="52:54:00:25:30:10"
 # Adresse IP demandée pour la VM, réservée dans le DHCP du réseau virtuel.
 VM_IP="192.168.253.10"
 # Fichier contenant la clé SSH publique du poste, déjà utilisée pour se connecter au serveur.
-# Elle sera installée dans la VM pour l'utilisateur debian.
+# Elle sera copiée dans la VM (cloud-init) pour l'utilisateur debian.
 SSH_KEY_FILE="${HOME}/.ssh/authorized_keys"
 
 # Vérifie si NOM apparaît dans la liste renvoyée par une commande virsh (ex. : in_list "$VM_NAME" list --name).
@@ -171,16 +173,40 @@ create_vm() {
         echo "Vérifiez la VM avant de relancer le script" >&2
         exit 1
     fi
-    # Crée un disque qcow2 de 10 Go qui ne stocke que les différences avec l'image Debian (-b),
-    # dont le format est indiqué par -F. L'image d'origine n'est jamais modifiée.
-    qemu-img create -f qcow2 -F qcow2 -b "$OS_IMAGE" "$VM_DISK" 10G
-    # Demande à libvirt de relire le dossier du pool pour y voir le nouveau disque.
+    # Copie complète de l'image Debian dans un disque autonome (sans fichier de base),
+    # puis agrandissement à 10 Go. L'image d'origine reste intacte pour une prochaine VM.
+    qemu-img convert -O qcow2 "$OS_IMAGE" "$VM_DISK"
+    qemu-img resize "$VM_DISK" 10G
+
+    # Prépare les fichiers cloud-init dans un dossier temporaire.
+    local seed_dir
+    seed_dir=$(mktemp -d)
+    # user-data : compte debian sans mot de passe, connexion uniquement par les clés SSH
+    # du fichier SSH_KEY_FILE, sudo dans la VM. Les lignes vides et les commentaires sont ignorés.
+    {
+        echo "#cloud-config"
+        echo "hostname: eisi-rodrigues-srv01"
+        echo "users:"
+        echo "  - name: debian"
+        echo "    shell: /bin/bash"
+        echo "    lock_passwd: true"
+        echo "    sudo: ALL=(ALL) NOPASSWD:ALL"
+        echo "    ssh_authorized_keys:"
+        grep -E '^(ssh-|ecdsa-)' "$SSH_KEY_FILE" | sed 's/^/      - /'
+        echo "ssh_pwauth: false"
+    } > "$seed_dir/user-data"
+    # meta-data : identifiant d'instance fixe (cloud-init ne rejoue pas la première configuration)
+    # et nom d'hôte de la VM.
+    printf 'instance-id: %s\nlocal-hostname: %s\n' "iid-eisi-rodrigues-srv01" "eisi-rodrigues-srv01" > "$seed_dir/meta-data"
+    # Fabrique l'ISO NoCloud : le nom de volume doit être « cidata » pour que cloud-init la trouve.
+    xorriso -as mkisofs -quiet -o "$SEED_ISO" -V cidata -J -r "$seed_dir/user-data" "$seed_dir/meta-data"
+    rm -rf "$seed_dir"
+    # Demande à libvirt de relire le dossier du pool pour y voir le disque et l'ISO.
     virsh -c "$LIBVIRT_URI" pool-refresh "$POOL_NAME"
 
     # Crée et démarre la VM : 2 Go de RAM, 2 vCPU, disque et carte réseau virtio.
     # La carte est branchée sur notre réseau avec la MAC réservée, ce qui lui donne 192.168.253.10.
-    # cloud-init installe la clé SSH pour l'utilisateur debian au premier démarrage
-    # (l'image cloud n'a aucun mot de passe).
+    # L'ISO cloud-init est branchée en lecteur CD-ROM et reste attachée.
     # Pas d'écran graphique : seulement une console série, accessible avec virsh console.
     # --import démarre sur le disque existant, sans installation depuis un ISO.
     # --autostart relance la VM avec le serveur ; --noautoconsole rend la main tout de suite.
@@ -189,9 +215,9 @@ create_vm() {
         --memory 2048 \
         --vcpus 2 \
         --disk "path=$VM_DISK,format=qcow2,bus=virtio" \
+        --disk "path=$SEED_ISO,device=cdrom" \
         --os-variant debian13 \
         --network "network=$VNET_NAME,mac=$VM_MAC,model=virtio" \
-        --cloud-init "clouduser-ssh-key=$SSH_KEY_FILE" \
         --graphics none \
         --console pty,target_type=serial \
         --import \
