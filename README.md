@@ -9,7 +9,7 @@ TP réalisé dans le cadre du Mastère EISI à l'IRIS Nice (Linux avancé, jour 
 1. Crée le réseau virtuel `RODRIGUES-SRV01-VNET` : `192.168.253.0/24` en NAT, avec la passerelle `192.168.253.1`. La VM obtient toujours l'adresse `192.168.253.10`, réservée par le DHCP grâce à son adresse MAC.
 2. Crée le pool de stockage `RODRIGUES-SRV01` dans `~/libvirt/images/`.
 3. Regarde si l'image Debian 13 est déjà sur le serveur. Sinon, il la télécharge, puis vérifie son empreinte SHA-512 auprès de Debian.
-4. Copie l'image dans un disque autonome de 10 Go, fabrique l'ISO cloud-init (utilisateur `debian`, clés SSH) et crée la VM avec `virt-install` : 2 vCPU, 2 Go de RAM, disque et carte réseau virtio, démarrage UEFI.
+4. Copie l'image dans un disque autonome de 10 Go, fabrique l'ISO cloud-init (utilisateur `debian`, clé SSH dédiée) et crée la VM avec `virt-install` : 2 vCPU, 2 Go de RAM, disque et carte réseau virtio, démarrage UEFI.
 5. Démarre la VM et affiche son adresse IP.
 
 On peut relancer le script sans risque. Ce qui existe déjà (réseau, pool, VM) est réutilisé, rien n'est écrasé.
@@ -18,7 +18,7 @@ On peut relancer le script sans risque. Ce qui existe déjà (réseau, pool, VM)
 
 - Un compte sur le serveur, membre du groupe `libvirt` (pas besoin de sudo).
 - Les outils `virsh`, `virt-install`, `qemu-img` et `curl`.
-- Une clé SSH publique dans `~/.ssh/authorized_keys`.
+- `ssh-keygen` (le script crée lui-même la clé SSH de la VM).
 
 ## Utilisation
 
@@ -33,9 +33,11 @@ Les paramètres (nom de la VM, IP, MAC, image, chemins) sont des variables au d�
 
 ## Connexion à la VM
 
+La VM n'accepte qu'une seule clé : `~/.ssh/id_ed25519_eisi-rodrigues-srv01`, créée par le script dans le compte du serveur. La clé privée reste sur le serveur, donc seul ce compte peut se connecter à la VM.
+
 ```bash
-# depuis son poste, en passant par le serveur, avec la clé acceptée par iris
-ssh -J iris -i ~/.ssh/iris_ed25519 debian@192.168.253.10
+ssh iris                                                              # depuis son poste
+ssh -i ~/.ssh/id_ed25519_eisi-rodrigues-srv01 debian@192.168.253.10   # depuis iris
 ```
 
 Une fois dans la VM, la commande `cloud-init status --wait` attend la fin de la configuration initiale.

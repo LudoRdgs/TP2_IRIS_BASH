@@ -32,9 +32,9 @@ VNET_BRIDGE="br-rod01"
 VM_MAC="52:54:00:25:30:10"
 # Adresse IP demandée pour la VM, réservée dans le DHCP du réseau virtuel.
 VM_IP="192.168.253.10"
-# Fichier contenant la clé SSH publique du poste, déjà utilisée pour se connecter au serveur.
-# Elle sera copiée dans la VM (cloud-init) pour l'utilisateur debian.
-SSH_KEY_FILE="${HOME}/.ssh/authorized_keys"
+# Clé SSH dédiée à la VM, rangée dans le compte du serveur : seul ce compte peut se connecter
+# à la VM. La clé publique est copiée dans la VM (cloud-init), la clé privée ne quitte pas le serveur.
+SSH_KEY="${HOME}/.ssh/id_ed25519_eisi-rodrigues-srv01"
 
 # Vérifie si NOM apparaît dans la liste renvoyée par une commande virsh (ex. : in_list "$VM_NAME" list --name).
 # La liste est d'abord récupérée en entier, puis les espaces de début et de fin de ligne sont retirés :
@@ -45,6 +45,19 @@ in_list() {
     shift
     list=$(virsh -c "$LIBVIRT_URI" "$@" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
     grep -Fxq -- "$name" <<< "$list"
+}
+
+# Crée la paire de clés SSH dédiée à la VM si elle n'existe pas encore.
+setup_ssh_key() {
+    # Le dossier ~/.ssh n'est accessible qu'au propriétaire du compte.
+    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+    # Une clé existante est réutilisée : la relance du script ne coupe pas l'accès à la VM.
+    if [[ ! -f "$SSH_KEY" ]]; then
+        # Clé ed25519 sans phrase de passe (-N ""), créée avec des droits 600 par ssh-keygen.
+        ssh-keygen -q -t ed25519 -N "" -C "$(whoami)@iris -> $VM_NAME" -f "$SSH_KEY"
+    fi
+    # Affiche l'empreinte de la clé autorisée dans la VM.
+    echo "Clé SSH de la VM : $(ssh-keygen -lf "$SSH_KEY.pub")"
 }
 
 # Crée, démarre et rend automatique le réseau virtuel 192.168.253.0/24 en NAT.
@@ -181,8 +194,8 @@ create_vm() {
     # Prépare les fichiers cloud-init dans un dossier temporaire.
     local seed_dir
     seed_dir=$(mktemp -d)
-    # user-data : compte debian sans mot de passe, connexion uniquement par les clés SSH
-    # du fichier SSH_KEY_FILE, sudo dans la VM. Les lignes vides et les commentaires sont ignorés.
+    # user-data : compte debian sans mot de passe, connexion uniquement avec la clé SSH
+    # dédiée du compte serveur, sudo dans la VM.
     {
         echo "#cloud-config"
         echo "hostname: eisi-rodrigues-srv01"
@@ -192,7 +205,7 @@ create_vm() {
         echo "    lock_passwd: true"
         echo "    sudo: ALL=(ALL) NOPASSWD:ALL"
         echo "    ssh_authorized_keys:"
-        grep -E '^(ssh-|ecdsa-)' "$SSH_KEY_FILE" | sed 's/^/      - /'
+        echo "      - $(cat "$SSH_KEY.pub")"
         echo "ssh_pwauth: false"
     } > "$seed_dir/user-data"
     # meta-data : identifiant d'instance fixe (cloud-init ne rejoue pas la première configuration)
@@ -249,9 +262,12 @@ start_vm() {
     fi
     # Affiche les baux DHCP pour vérifier que la VM a bien reçu 192.168.253.10.
     virsh -c "$LIBVIRT_URI" net-dhcp-leases "$VNET_NAME"
+    # Rappelle la commande de connexion, à lancer depuis ce compte sur le serveur.
+    echo "Connexion : ssh -i $SSH_KEY debian@$VM_IP"
 }
 
-# Exécute les étapes dans l'ordre : réseau, stockage, image, création puis démarrage de la VM.
+# Exécute les étapes dans l'ordre : clé SSH, réseau, stockage, image, création puis démarrage de la VM.
+setup_ssh_key
 setup_vnet
 setup_pool
 setup_os
