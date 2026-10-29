@@ -68,7 +68,9 @@ EOF
     fi
 
     # Démarre le réseau (pont et DHCP) seulement s'il n'est pas déjà actif.
-    if ! virsh -c "$LIBVIRT_URI" net-info "$VNET_NAME" | grep -q 'Active:.*yes'; then
+    # Sans --all, net-list ne liste que les réseaux actifs : ce test ne dépend pas
+    # de la langue de virsh (net-info affiche « Actif : oui » sur un serveur en français).
+    if ! virsh -c "$LIBVIRT_URI" net-list --name | grep -Fxq "$VNET_NAME"; then
         virsh -c "$LIBVIRT_URI" net-start "$VNET_NAME"
     fi
     # Redémarre le réseau automatiquement avec le serveur ; la commande peut être relancée.
@@ -89,8 +91,9 @@ setup_pool() {
         virsh -c "$LIBVIRT_URI" pool-define-as "$POOL_NAME" dir --target "$POOL_DIR"
     fi
 
-    # Démarre le pool uniquement s'il n'est pas déjà dans l'état running.
-    if ! virsh -c "$LIBVIRT_URI" pool-info "$POOL_NAME" 2>/dev/null | grep -q 'State:.*running'; then
+    # Démarre le pool uniquement s'il n'est pas déjà actif.
+    # Sans --all, pool-list ne liste que les pools actifs (indépendant de la langue).
+    if ! virsh -c "$LIBVIRT_URI" pool-list --name | grep -Fxq "$POOL_NAME"; then
         virsh -c "$LIBVIRT_URI" pool-start "$POOL_NAME"
     fi
     # Configure libvirt pour démarrer ce pool à chaque démarrage du serveur.
@@ -187,7 +190,8 @@ start_vm() {
     fi
 
     # virt-install démarre déjà la VM : dans ce cas, simple message sans erreur.
-    if virsh -c "$LIBVIRT_URI" domstate "$VM_NAME" | grep -q 'running'; then
+    # Sans --all, list ne liste que les VM en cours d'exécution (indépendant de la langue).
+    if virsh -c "$LIBVIRT_URI" list --name | grep -Fxq "$VM_NAME"; then
         echo "La VM $VM_NAME est déjà en cours d'exécution."
     else
         # Démarre la VM définie dans libvirt.
