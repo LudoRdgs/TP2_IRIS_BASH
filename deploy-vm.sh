@@ -207,6 +207,8 @@ create_vm() {
     # Crée et démarre la VM : 2 Go de RAM, 2 vCPU, disque et carte réseau virtio.
     # La carte est branchée sur notre réseau avec la MAC réservée, ce qui lui donne 192.168.253.10.
     # L'ISO cloud-init est branchée en lecteur CD-ROM et reste attachée.
+    # Démarrage UEFI (firmware OVMF, sans Secure Boot) : sur ce serveur (QEMU 7.2), les images
+    # Debian 13 restent bloquées après GRUB en mode BIOS, alors qu'elles démarrent en UEFI.
     # Pas d'écran graphique : seulement une console série, accessible avec virsh console.
     # --import démarre sur le disque existant, sans installation depuis un ISO.
     # --autostart relance la VM avec le serveur ; --noautoconsole rend la main tout de suite.
@@ -218,6 +220,7 @@ create_vm() {
         --disk "path=$SEED_ISO,device=cdrom" \
         --os-variant debian13 \
         --network "network=$VNET_NAME,mac=$VM_MAC,model=virtio" \
+        --boot "loader=/usr/share/OVMF/OVMF_CODE_4M.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/OVMF/OVMF_VARS_4M.fd" \
         --graphics none \
         --console pty,target_type=serial \
         --import \
