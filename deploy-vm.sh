@@ -96,6 +96,15 @@ setup_pool() {
     # 0711 : seul le propriétaire lit et écrit ; QEMU peut traverser le dossier
     # pour ouvrir le disque, sans pouvoir lister son contenu.
     mkdir -p "$POOL_DIR" && chmod 0711 "$POOL_DIR"
+    # QEMU tourne sous le compte libvirt-qemu : il doit pouvoir traverser (droit x) le HOME
+    # et les dossiers parents du pool pour atteindre le disque.
+    # L'ACL donne ce droit au seul compte libvirt-qemu, sans ouvrir le HOME aux autres étudiants.
+    # Sans la commande setfacl, on se rabat sur o+x (traversée sans lecture du contenu).
+    if command -v setfacl >/dev/null 2>&1; then
+        setfacl -m u:libvirt-qemu:x "$HOME" "$HOME/libvirt" "$HOME/libvirt/images"
+    else
+        chmod o+x "$HOME" "$HOME/libvirt" "$HOME/libvirt/images"
+    fi
     # Ne définit le pool que s'il n'existe pas déjà dans libvirt.
     if ! in_list "$POOL_NAME" pool-list --all --name; then
         # Déclare un pool de type répertoire pointant vers POOL_DIR.
