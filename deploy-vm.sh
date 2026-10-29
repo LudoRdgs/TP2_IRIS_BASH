@@ -105,7 +105,9 @@ setup_os() {
     # Chemin de l'image trouvée dans le répertoire personnel, s'il y en a une.
     local existing_image
     # Cherche dans tout le HOME un fichier portant le nom de l'image et s'arrête au premier trouvé.
-    existing_image=$(find "$HOME" -type f -name "$OS_IMAGE_NAME" -print -quit)
+    # Les dossiers illisibles (ex. données Docker) font échouer find : on masque ces messages
+    # et "|| true" empêche set -e d'arrêter le script.
+    existing_image=$(find "$HOME" -type f -name "$OS_IMAGE_NAME" -print -quit 2>/dev/null || true)
     # Si la recherche a renvoyé un chemin, l'image est déjà sur le serveur : on la réutilise.
     if [[ -n "$existing_image" ]]; then
         OS_IMAGE="$existing_image"
